@@ -20,33 +20,104 @@ return {
         'rafamadriz/friendly-snippets', -- Optional
     },
     config = function()
-	    -- Import necessary modules
+	   -- Import necessary modules
         local lspconfig = require('lspconfig')
         local mason = require('mason')
         local mason_lspconfig = require('mason-lspconfig')
         local cmp = require('cmp')
         local luasnip = require('luasnip')
 
-	    local lspconfig_defaults = lspconfig.util.default_config
-	    lspconfig_defaults.capabilities = vim.tbl_deep_extend(
-  		    'force',
-  		    lspconfig_defaults.capabilities,
-  		    require('cmp_nvim_lsp').default_capabilities()
-	    )
+        -- Load friendly-snippets
+        require('luasnip.loaders.from_vscode').lazy_load()
+
+        -- Add emmet-style snippets to HTML and related filetypes
+        luasnip.filetype_extend('html', {'html-es6-snippets'})
+        luasnip.filetype_extend('typescriptreact', {'html-es6-snippets'})
+        luasnip.filetype_extend('javascriptreact', {'html-es6-snippets'})
+
+        local capabilities = require('cmp_nvim_lsp').default_capabilities()
+        capabilities.positionEncodings = { 'utf-8', 'utf-16' }
+        capabilities.textDocument.completion.completionItem.snippetSupport = true
+
+        local global_on_attach = function(client, bufnr)
+            local opts = { buffer = bufnr, noremap = true, silent = true }
+
+            vim.keymap.set("n", "gd", vim.lsp.buf.definition, opts)
+            vim.keymap.set("n", "K", vim.lsp.buf.hover, opts)
+            vim.keymap.set("n", "<leader>vws", vim.lsp.buf.workspace_symbol, opts)
+            vim.keymap.set("n", "<leader>vd", vim.diagnostic.open_float, opts)
+            vim.keymap.set("n", "[d", function() vim.diagnostic.jump({count = 1, float = true}) end, opts) -- changed to jump() instead of goto_next()
+            vim.keymap.set("n", "]d", function() vim.diagnostic.jump({count = -1, float = true}) end, opts) -- changed to jump() instead of goto_prev()
+            vim.keymap.set("n", "<leader>vca", vim.lsp.buf.code_action, opts)
+            vim.keymap.set("n", "<leader>vrr", vim.lsp.buf.references, opts)
+            vim.keymap.set("n", "<leader>vrn", vim.lsp.buf.rename, opts)
+            vim.keymap.set("i", "<C-h>", vim.lsp.buf.signature_help, opts)
+
+        end
+
+	   local lspconfig_defaults = lspconfig.util.default_config
+        lspconfig_defaults.on_attach = global_on_attach
+	   lspconfig_defaults.capabilities = capabilities
 
         --vim.lsp.set_log_level("debug")
         -- Mason setup
         mason.setup({})
         mason_lspconfig.setup({
-            ensure_installed = { 'ts_ls', 'eslint', 'lua_ls', 'rust_analyzer', 'pylsp', 'cssls', 'tailwindcss', 'clangd' },
+            ensure_installed = {
+                'gopls', 'ts_ls', 'eslint', 'lua_ls', 'rust_analyzer',
+                'pyright', 'cssls', 'tailwindcss', 'html', 'emmet_ls', 'jsonls'
+            },
             handlers = {
                 function(server_name)
                     lspconfig[server_name].setup({})
+                end,
+                ["gopls"] = function()
+                    lspconfig.gopls.setup({
+                        cmd = { "gopls" },
+                        filetypes = { "go", "gomod", "gowork", "gotmpl" },
+                        settings = {
+                            gopls = {
+                                completeUnimported = true,
+                                usePlaceholders = true,
+                                analyses = {
+                                    unusedparams = true,
+                                },
+                            },
+                        },
+                    })
+                end,
+                ["jsonls"] = function()
+                    lspconfig.jsonls.setup({
+                        cmd = { 'vscode-json-language-server', '--stdio' },
+                        init_options = { provideFormatter = true },
+                        filetypes = { 'json' },
+                    })
+                end,
+                ["rust_analyzer"] = function()
+                    lspconfig.rust_analyzer.setup({
+                        settings = {
+                            ['rust-analyzer'] = {
+                                diagnostics = { enable = true; }
+                            }
+                        },
+                        filetypes = { 'rust' },
+                    })
+                end,
+                ["ts_ls"] = function()
+                    lspconfig.ts_ls.setup({
+                        cmd = { 'typescript-language-server', '--stdio' },
+                        init_options = { hostInfo = 'neovim', },
+                        filetypes = {
+                            'javascript', 'javascriptreact', 'javascript.jsx',
+                            'typescript', 'typescriptreact', 'typescript.tsx'
+                        },
+                    })
                 end,
                 ["lua_ls"] = function()
                     lspconfig.lua_ls.setup({
                         settings = {
                             Lua = {
+                                runtime = { version = 'LuaJIT' },
                                 diagnostics = {
                                     globals = { 'vim' }
                                 }
@@ -54,32 +125,76 @@ return {
                         }
                     })
                 end,
-                -- Custom handler for pylsp
-                ["pylsp"] = function()
-                    lspconfig.pylsp.setup({
-                        settings = {
-                            pylsp = {
-                                plugins = {
-                                    pycodestyle = {
-                                        ignore = {'W391', 'E302', 'E305', 'E265', 'W293' },
-                                        maxLineLength = 100,
-                                    },
+                ["emmet_ls"] = function()
+                    lspconfig.emmet_ls.setup({
+                        init_options = {
+                            html = {
+                                options = {
+                                    ["bem.enabled"] = true,
                                 },
                             },
                         },
                     })
                 end,
+                ["html"] = function()
+                    lspconfig.html.setup({
+                        cmd = { 'vscode-html-language-server', '--stdio' },
+                        filetypes = { 'html', 'templ' },
+                        init_options = {
+                            provideFormatter = true,
+                            embeddedLanguages = { css = true, javascript = true },
+                            configurationSection = { 'html', 'css', 'javascript' }
+                        },
+                    })
+                end,
+                -- Custom handler for pylsp
+                ["pylsp"] = function()
+                    vim.api.nvim_create_autocmd('FileType', {
+                        pattern = 'python',
+                        callback = function()
+                            local venv = os.getenv('VIRTUAL_ENV')
+                            local python_path = venv and venv .. '/bin/python3' or vim.fn.exepath('python3')
+                            print("Using Python:", python_path)
+                            lspconfig.pylsp.setup({
+                                cmd = { python_path, '-m', 'pylsp' },
+                                settings = {
+                                    pylsp = {
+                                        plugins = {
+                                            --configurationSources = {'flake8', 'pylint', 'venv'},
+                                            pycodestyle = { enabled = false },
+                                            autopep8 = {
+                                                enabled = true
+                                            },
+                                            flake8 = {
+                                                enabled = true,
+                                                ignore = {'E302', 'E305'},
+                                                maxLineLength = 100,
+                                            },
+                                            pylint = {
+                                                enabled = true,
+                                                args = {
+                                                    '--disable=C0116',
+                                                    '--disable=C0103',
+                                                    '--disable=C0114',
+                                                    '--disable=W0621',
+                                                    '--disable=W0718',
+                                                    '--disable=W3101',
+                                                }
+                                            },
+                                            pylsp_mypy = {
+                                                enabled = true,
+                                                overrides = { '--python-executable', python_path },
+                                            },
+                                        },
+                                    },
+                                },
+                            })
+                        end,
+                        once = true,
+                    })
+                end,
             },
         })
-
-        -- Set diagnostic signs
-        --vim.fn.sign_define('DiagnosticSignError', { text = 'E', texthl = 'DiagnosticSignError' })
-        --vim.fn.sign_define('DiagnosticSignWarn', { text = 'W', texthl = 'DiagnosticSignWarn' })
-        --vim.fn.sign_define('DiagnosticSignInfo', { text = 'I', texthl = 'DiagnosticSignInfo' })
-        --vim.fn.sign_define('DiagnosticSignHint', { text = 'H', texthl = 'DiagnosticSignHint' })
-
-	    -- Completion setup
-        --luasnip.config.setup({})
 
         cmp.setup({
             snippet = {
@@ -94,18 +209,37 @@ return {
                 ['<C-Space>'] = cmp.mapping.complete(),        -- Trigger completion menu
                 ['<C-b>'] = cmp.mapping.scroll_docs(-4),
                 ['<C-f>'] = cmp.mapping.scroll_docs(4),
+                ['<Tab>'] = cmp.mapping(function(fallback)
+                    if cmp.visible() then
+                        cmp.select_next_item()
+                    elseif luasnip.expand_or_jumpable() then
+                        luasnip.expand_or_jump()
+                    else
+                        fallback()
+                    end
+                end, { "i", "s" }),
+                ['<S-Tab>'] = cmp.mapping(function(fallback)
+                    if cmp.visible() then
+                        cmp.select_prev_item()
+                    elseif luasnip.jumpable(-1) then
+                        luasnip.jump(-1)
+                    else
+                        fallback()
+                    end
+                end, { "i", "s" }),
             }),
             sources = {
                 { name = 'nvim_lsp' },
+                { name = 'luasnip' },
                 { name = 'buffer' },
                 { name = 'path' },
-                { name = 'luasnip' },
+                { name = 'nvim_lua' }
             },
         })
 
         -- Diagnostic configuration
         vim.diagnostic.config({
-            update_in_insert = true,
+            update_in_insert = false,
             --virtual_text = false,
             float = {
                 focusable = false,
@@ -119,117 +253,5 @@ return {
             },
         })
 
-        -- LSP keymaps (on_attach)
-        --local on_attach = function(client, bufnr)
-        --    local opts = { buffer = bufnr, remap = false }
-        --end
-       -- Attach the on_attach function to all LSPs
-        vim.api.nvim_create_autocmd('LspAttach', {
-            callback = function(event)
-                local opts = {buffer = event.buf}
-                -- Keymaps for LSP functions
-                vim.keymap.set("n", "gd", vim.lsp.buf.definition, opts)
-                vim.keymap.set("n", "K", vim.lsp.buf.hover, opts)
-                vim.keymap.set("n", "<leader>vws", vim.lsp.buf.workspace_symbol, opts)
-                vim.keymap.set("n", "<leader>vd", vim.diagnostic.open_float, opts)
-                vim.keymap.set("n", "[d", vim.diagnostic.goto_next, opts)
-                vim.keymap.set("n", "]d", vim.diagnostic.goto_prev, opts)
-                vim.keymap.set("n", "<leader>vca", vim.lsp.buf.code_action, opts)
-                vim.keymap.set("n", "<leader>vrr", vim.lsp.buf.references, opts)
-                vim.keymap.set("n", "<leader>vrn", vim.lsp.buf.rename, opts)
-                vim.keymap.set("i", "<C-h>", vim.lsp.buf.signature_help, opts)
-                --local client = vim.lsp.get_client_by_id(event.data.client_id)
-                --on_attach(client, event.buf)
-            end,
-        })
-
     end,
 }
-
--- TODO: fix this 
---lsp.configure('clangd', {
---    filetypes={ "c", "cpp", "objc", "objcpp", "cuda", "proto" },
---    root_dir=lspconfig.util.root_pattern(
---          '.clangd',
---          '.clang-tidy',
---          '.clang-format',
---          'compile_commands.json',
---          'compile_flags.txt',
---          'configure.ac',
---          '.git'
---          ),
---    single_file_support=true
---})
-
-
--- Add debug commands 
-
---vim.api.nvim_create_user_command("LLMDebug", function ()
---    -- Check LSP status
---   local clients = vim.lsp.get_active_clients()
---    print("Active LSP clients:")
---    for _, client in ipairs(clients) do
---        print(string.format("- %s (id: %d)", client.name, client.id))
---    end
---
---    -- Check Ollama connection
-    --local curl = require("plenary.curl")
-    --local response = curl.post("http://127.0.0.1:11434/api/generate", {
-    --    body = vim.fn.json_encode({
-    --        model = "qwen2.5-coder:7b",
-    --        prompt = "test"
-    --    }),
-    --    headers = {
-    --        content_type = "application/json",
-    --    },
-    --})
-    --print("\nOllama test response:", vim.inspect(response))
-
-    -- Check llm-ls executable 
- --   local llm_ls_path = vim.fn.stdpath("data") .. "/mason/bin/llm-ls"
- --   print("\nllm-ls path:", llm_ls_path)
- --   print("llm-ls executable:", vim.fn.executable(llm_ls_path) == 1)
-
-    -- Print LSP logs location
- --   print("\nLSP logs location:", vim.lsp.get_log_path())
---end, {})
-
---vim.api.nvim_create_user_command("LLMStatus", function ()
---    local clients = vim.lsp.get_active_clients()
---    for _, client in ipairs(clients) do
---        -- changed to llm-ls from llm_ls
---        if client.name == "llm-ls" then
---            print("LLM LSP is active")
---            print("Server capabilities:", vim.inspect(client.server_capabilities))
---            return
---        end
---    end
---    print("LLM LSP is not active")
----end, {})
-
---vim.api.nvim_create_user_command("ReloadLLM", function()
-    -- Stop the LSP client
---    local clients = vim.lsp.get_active_clients()
---    for _, client in ipairs(clients) do
-        -- changed to llm-ls from llm_ls
---        if client.name == "llm-ls" then
----            vim.lsp.stop_client(client.id, true) -- Force stop
---        end
---    end
-
-    -- Clear existing LSP state
---    vim.schedule(function()
-        -- Restart the LSP
-        -- changed to llm-ls from llm_ls
---        vim.cmd("LspStart llm-ls")
-
-        -- Wait a bit before enabling suggestions
---        vim.defer_fn(function ()
---            vim.cmd("LLMToggleAutoSuggest")
---            vim.cmd("LLMToggleAutoSuggest") -- Ensure its on
---            print("LLM reloaded and suggestions enabled")
---        end, 1000) -- Wait 1 second
---    end)
---end, {})
-
-
